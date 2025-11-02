@@ -1,7 +1,10 @@
 # requirements.txt
 streamlit
-google-genai
 pypdf
 faiss-cpu
-langchain-community
+# 既存のライブラリ
 langchain
+langchain-community 
+
+# LangChainでGoogleのサービス(Gemini/GenAI)を使用するために必要
+google-genai
