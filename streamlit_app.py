@@ -1,114 +1,81 @@
 import streamlit as st
-import os
-# from google import genai  # <-- 削除
-# from google.genai.errors import APIError # <-- 削除
-from pypdf import PdfReader
-from langchain_community.embeddings import GoogleGenAIEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-# from langchain.prompts import PromptTemplate 
-# from langchain.chains.question_answering import load_qa_chain 
+from google import genai
+from google.genai.errors import APIError
 
-# --- 1. 初期設定とAPIキーの確認 ---
+# --- ページ設定 ---
+st.set_page_config(
+    page_title="Gemini Chatbot",
+    page_icon="🤖"
+)
+st.title("🤖 Gemini チャットボット")
 
-st.set_page_config(page_title="PDF参照型チャットボット by Gemini", layout="wide")
-st.title("📄 PDF参照型チャットボット")
-st.subheader("最低限の実装：PDFをアップロードし、知識ベースを構築します。")
+# --- APIキーの読み込みと初期化 ---
 
-# secrets.tomlからAPIキーを取得
+# StreamlitのsecretsからAPIキーを取得
 try:
-    api_key = st.secrets["GEMINI_API_KEY"] 
+    gemini_api_key = st.secrets["gemini_api_key"]
 except KeyError:
-    st.error("⚠️ GEMINI_API_KEYが`.streamlit/secrets.toml`に設定されていません。先に設定してください。")
+    st.error("🚨 `.streamlit/secrets.toml` に `gemini_api_key` が設定されていません。")
     st.stop()
 
-# --- 2. ユーティリティ関数 ---
+# Geminiクライアントの初期化
+try:
+    client = genai.Client(api_key=gemini_api_key)
+except Exception as e:
+    st.error(f"🚨 Geminiクライアントの初期化に失敗しました: {e}")
+    st.stop()
 
-@st.cache_resource(show_spinner=False)
-def get_pdf_text(pdf_docs):
-    """アップロードされたPDFドキュメントからテキストを抽出し、結合します。"""
-    text = ""
-    for pdf in pdf_docs:
-        pdf_reader = PdfReader(pdf)
-        for page in pdf_reader.pages:
-            text += page.extract_text() or ""
-    return text
+# --- モデル設定 ---
+# 使用するモデル。マルチターンチャットに対応しているモデルを選択
+MODEL_NAME = "gemini-2.5-flash"
 
-@st.cache_resource(show_spinner=False)
-def get_text_chunks(text):
-    """抽出したテキストを、埋め込みに適したサイズに分割します。"""
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=10000,
-        chunk_overlap=1000,
-        length_function=len
-    )
-    chunks = text_splitter.split_text(text)
-    return chunks
+# --- チャット履歴の初期化 ---
+if "chat" not in st.session_state:
+    try:
+        # 新しいチャットセッションを作成
+        st.session_state.chat = client.chats.create(model=MODEL_NAME)
+    except APIError as e:
+        st.error(f"🚨 チャットセッションの作成に失敗しました: {e}")
+        st.session_state.chat = None
+        st.stop()
 
-@st.cache_resource(show_spinner=False)
-def get_vector_store(text_chunks):
-    """テキストチャンクから埋め込みを生成し、FAISSベクトルストアに保存します。"""
-    if not text_chunks:
-        st.warning("処理するテキストチャンクがありません。")
-        return None
-        
-    with st.spinner("🔄 ベクトルストアを構築中..."):
-        # LangChainのGoogleGenAIEmbeddingsを使用
-        # APIキーは自動的に環境変数または引数から取得されます
-        embeddings = GoogleGenAIEmbeddings(model="embedding-001", google_api_key=api_key)
-        # FAISS (インメモリ)に保存
-        vector_store = FAISS.from_texts(text_chunks, embedding=embeddings)
-        st.success(f"✅ ベクトルストア構築完了！ {len(text_chunks)}個のチャンクを知識ベースに追加しました。")
-    return vector_store
-
-
-# --- 3. Streamlit UIとメインロジック ---
-
-# サイドバーでファイルアップロードと処理を実行
-with st.sidebar:
-    st.subheader("ファイルのアップロード")
-    pdf_docs = st.file_uploader(
-        "PDFファイルをアップロードしてください。",
-        accept_multiple_files=True,
-        type=['pdf']
-    )
-    
-    # PDFがアップロードされ、ボタンが押されたら処理を開始
-    if pdf_docs and st.button("知識ベースの構築 (最低機能)"):
-        try:
-            # 1. PDFからテキストを抽出
-            raw_text = get_pdf_text(pdf_docs)
-            
-            if not raw_text.strip():
-                st.error("アップロードされたPDFファイルからテキストを抽出できませんでした。ファイル形式を確認してください。")
-            else:
-                # 2. テキストをチャンクに分割
-                text_chunks = get_text_chunks(raw_text)
-                
-                # 3. ベクトルストアを生成し、セッションステートに保存
-                vector_store = get_vector_store(text_chunks)
-                st.session_state.vector_store = vector_store
-                st.session_state.messages = [] # チャット履歴をリセット
-                
-        except Exception as e:
-            st.error(f"ファイルの処理中にエラーが発生しました: {e}")
-
-# --- 4. チャットインターフェース (最低限の表示のみ) ---
-
-st.warning("質問応答機能は未実装です。次はチャット機能を追加します。")
-
-# チャット履歴をセッションステートで管理
+# Streamlitのセッションステートにメッセージ履歴を初期化
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    # 最初の挨拶
+    st.session_state.messages = [
+        {"role": "assistant", "content": "こんにちは！私はGeminiを搭載したチャットボットです。何をお手伝いしましょうか？"}
+    ]
 
-# 過去のメッセージを表示
+# --- 既存のメッセージの表示 ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.write(message["content"])
+        st.markdown(message["content"])
 
-# ユーザーからの入力を受け付ける (現在はまだ処理しない)
-if prompt := st.chat_input("質問を入力してください (現在は非アクティブ)"):
+# --- ユーザー入力の処理 ---
+if prompt := st.chat_input("メッセージを入力してください..."):
+    # ユーザーのメッセージを履歴に追加して表示
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.write(prompt)
-    st.chat_message("assistant").write("ベクトルストアの構築は完了しましたが、質問応答機能はまだ実装されていません。")
+        st.markdown(prompt)
+
+    if st.session_state.chat:
+        # アシスタント（Gemini）の応答を生成
+        with st.chat_message("assistant"):
+            try:
+                # Geminiにメッセージを送信し、ストリーミングで応答を取得
+                response = st.session_state.chat.send_message(prompt, stream=True)
+                
+                # ストリーミングされた応答を表示
+                full_response = st.write_stream(response)
+                
+                # 完全な応答を履歴に追加
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+            except APIError as e:
+                error_message = f"Gemini APIエラーが発生しました: {e}"
+                st.error(error_message)
+                st.session_state.messages.append({"role": "assistant", "content": error_message})
+            except Exception as e:
+                error_message = f"予期せぬエラーが発生しました: {e}"
+                st.error(error_message)
+                st.session_state.messages.append({"role": "assistant", "content": error_message})
