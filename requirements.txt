@@ -1,1 +1,7 @@
+# requirements.txt
 streamlit
+google-genai
+pypdf
+faiss-cpu
+langchain-community
+langchain
